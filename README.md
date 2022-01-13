@@ -108,7 +108,9 @@ For the *minimum viable product*:
 - [ ]  Implement asynchronous calls to web-scraping functions
   - [ ] There might be CAPTCHA tests if server thinks a bot is executing repeated consecutive commands, therefore it may require some testing to find ideal timing for not overloading the interface.
 
+- [ ] Create modules for different classes and a collection for helper functions
 
+- [ ]
 
 ### Developer Notes
 

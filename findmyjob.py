@@ -22,7 +22,7 @@ import logging
 import asyncio  # Possibly unused
 import re
 import csv
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, element
 import bs4
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
@@ -77,7 +77,7 @@ class ConfigHandler:
         mode_switcher = {
             "generate": self._generate_bare_bones_config,
             "resolve": self._interpret_configuration_file,
-            "help": ...  # :REVIEW: is Ellipsis correct in this case?
+            "help": ...  # :REVIEW:  is Ellipsis correct in this case?
         }
 
         self.filename = filename
@@ -118,8 +118,6 @@ class JobSearcher:
         self.location = config["location"].casefold()
         self.location_quoted = ""
         self.url = ""
-        self.Soup = None  # Will be of type :class:'BeautifulSoup'
-        self.soup_search = None  # Will be of type :class:'ResultSet'
 
         self._form_search_url()
 
@@ -150,95 +148,6 @@ class JobSearcher:
 
         logger.info("Generated Search URL = {}".format(self.url))
 
-    @classmethod
-    def get_linkedin_tags(cls):
-        # :FIXME:
-        # Hard-coded tags for current version of certain interface of 
-        #   websites, requires maintenance for long-term use
-        # :REVIEW:
-        # Tags could be read from a JSON file instead of being hardcoded
-
-        
-        linkedin_tags = {
-            # Define which tags define the labelled information.
-
-            # Tags related to Job postings 
-            "job_posting": (  # The main tag for each job posting 
-                "div", {
-                    "class": "base-card base-card--link" \
-                             + " " 
-                             + "base-search-card"  
-                             + " " 
-                             + "base-search-card--link job-search-card"
-                }
-            ),
-
-            "job_title":(
-                "h3", {
-                    "class": "base-search-card__title"
-                }
-            ),
-
-            "job_url": (
-                "a", {
-                    "class": "base-card__full-link",
-                    "data-tracking-control-name": \
-                        "public_jobs_jserp-result_search-card"
-                }
-            ),
-            
-            "job_location": (
-                "span", {
-                    "class": "job-search-card__location"
-                }
-            ),
-
-            "job_company":(
-                "a", {
-                    "class": "hidden-nested-link",
-                    "data-tracking-control-name": \
-                        "public_jobs_jserp-result_job-search-card-subtitle"
-                }
-            ),
-
-            # Data displayed in the side-pane OR individual pages:
-            "details": (
-                "div", {
-                    "class": "details-pane__content details-pane__content--show",
-                }
-            ),
-
-            "description": (
-                "div", {
-                    "class": "description__text description__text--rich"
-                }
-            ),
-
-            "job_id" : (
-                "code", {
-                    "style": "",
-                    "id": "jobId"
-                }
-            ),
-
-            # This should be equal to :cls.linkedin_tags.["job_title"]:
-            "job_name": (
-                "h2", {
-                    "class": "top-card-layout__title topcard__title"
-                }
-            ),
-
-            # This should be equal to :cls.linkedin_tags.["job_url"]:
-            "job_link": (
-                "a", {
-                    "class": "topcard__link"
-                }
-            ),
-        }
-
-        return linkedin_tags
-
-
 class JobDataScraper:
 
     def __init__(self,
@@ -248,6 +157,7 @@ class JobDataScraper:
         self.job_searcher = job_searcher
         self.cli_args = cli_args
         self.chrome_driver = None
+        self.__joblist = list()
 
 
     def _invoke_webdriver(self) -> webdriver.Chrome:
@@ -269,7 +179,7 @@ class JobDataScraper:
         # :REVIEW: 
         return chrome_driver
 
-    def _scrape_website(self, source_code:str, html_tag_info:Sequence):
+    def _scrape_webpage(self, source_code:str, html_tag_info:Sequence):
 
         # :REVIEW:
         soup = BeautifulSoup(source_code, 'html.parser')
@@ -281,21 +191,19 @@ class JobDataScraper:
         
         return soup_search_results
 
-        
-        
-
-    def __obtain_linkedin_job_data(self, min_post=1000):
+    def __obtain_linkedin_joblist(self, min_post=1000):
 
         # :param min_post: Number of scraped job postings considered enough
         #     to conclude scraping for job postings
 
         chrome_driver = self.chrome_driver
-        html_tags = self.job_searcher.get_linkedin_tags()
-        num_scraped_tags = 0
+        html_tags = self.get_linkedin_tags()
+        cached_page_source = chrome_driver.page_source
 
         # Start scraping job posting information
         search_completed = False
         while not search_completed:
+
             htmlelement = chrome_driver.find_element_by_tag_name('html')
             htmlelement.send_keys(Keys.END)
 
@@ -309,12 +217,9 @@ class JobDataScraper:
                 time.sleep(1) # Wait for new jobs to load onto website
                 continue
 
-            # :TODO: Call _scrape_website method for this
-            soup = BeautifulSoup(chrome_driver.page_source, 'html.parser')
-            soup_search_results: bs4.element.ResultSet
-            soup_search_results = soup.find_all(
-                html_tags["job_posting"][0],
-                attrs=html_tags["job_posting"][1]
+            soup_search_results = self._scrape_webpage(
+                source_code=chrome_driver.page_source,
+                html_tag_info=html_tags["job_posting"]
             )
             num_scraped_tags = len(soup_search_results) 
 
@@ -322,28 +227,128 @@ class JobDataScraper:
                 # If there are sufficiently many job postings scraped
                 search_completed = True
                 break
+            elif num_scraped_tags == 0:
+                # If there are no html tags found that match the 
+                # specified template, conclude that 
+                # something wrong happened: 
+                # like an authentication wall getting raised 
+                # or a CAPTCHA, or a connection error.
 
+                soup_search_results = self._scrape_webpage(
+                    source_code=cached_page_source,
+                    html_tag_info=html_tags["job_posting"]
+                )
+                # :REVIEW: Maybe raise an error for specific user config
+                break
             else:
-                pass # :FIXME:
+                continue
+
+        for ind, element in enumerate(soup_search_results):
+            # :TODO:
+            pass
             
-            # Backup the 
-            with open(filepath, 'ab') as file_: #:FIXME:
-                w = csv.writer(file_, dialect='excel') #:DEBUG:
-                w.writerows(LL)
-
-
-
             
-        pass
-        chrome_driver.quit()
-        return soup_search_results
+
+    def _backup_joblist(self, filepath):
+        # Backup the 
+        with open(filepath, 'ab') as file_: #:FIXME:
+            w = csv.writer(file_, dialect='excel') #:DEBUG:
+            # w.writerows()
+
+    @classmethod
+    def get_linkedin_tags(cls):
+        # :FIXME:
+        # Hard-coded tags for current version of certain interface of
+        #   websites, requires maintenance for long-term use
+
+        linkedin_tags = {
+            # Define which tags define the labelled information.
+
+            # Tags related to Job postings
+            "job_posting": (  # The main tag for each job posting
+                "div", {
+                    "class": "base-card base-card--link" \
+                             + " "
+                             + "base-search-card"
+                             + " "
+                             + "base-search-card--link job-search-card"
+                }
+            ),
+
+            "job_title": (
+                "h3", {
+                    "class": "base-search-card__title"
+                }
+            ),
+
+            "job_url": (
+                "a", {
+                    "class": "base-card__full-link",
+                    "data-tracking-control-name": \
+                    "public_jobs_jserp-result_search-card"
+                }
+            ),
+
+            "job_location": (
+                "span", {
+                    "class": "job-search-card__location"
+                }
+            ),
+
+            "job_company": (
+                "a", {
+                    "class": "hidden-nested-link",
+                    "data-tracking-control-name": \
+                    "public_jobs_jserp-result_job-search-card-subtitle"
+                }
+            ),
+
+            # Data displayed in the side-pane OR individual pages:
+            "details": (
+                "div", {
+                    "class": "details-pane__content details-pane__content--show",
+                }
+            ),
+
+            "description": (
+                "div", {
+                    "class": "description__text description__text--rich"
+                }
+            ),
+
+            "job_id": (
+                "code", {
+                    "style": "",
+                    "id": "jobId"
+                }
+            ),
+
+            # This should be equal to :cls.linkedin_tags.["job_title"]:
+            "job_name": (
+                "h2", {
+                    "class": "top-card-layout__title topcard__title"
+                }
+            ),
+
+            # This should be equal to :cls.linkedin_tags.["job_url"]:
+            "job_link": (
+                "a", {
+                    "class": "topcard__link"
+                }
+            ),
+        }
+        return linkedin_tags
+
 
     def execute(self):
 
         chrome_driver = self._invoke_webdriver()
 
         if self.job_searcher.website == 'linkedin':
-            self.__obtain_linkedin_job_data()
+            self.__obtain_linkedin_joblist()
+
+        chrome_driver.quit()
+
 
 
 #################################################################
@@ -382,11 +387,6 @@ def template(JobSearch):
     for ind, result in enumerate(soup_search_results):
         logger.debug("\t# RESULT-{:04d}:\n'{}'".format(ind, str(result))
     
-
-def soup_search(jobsearch):
-    pass
-
-
 
 # :XXX: DEPRECATED to be used within a class as a method
 def form_search_url(config):
