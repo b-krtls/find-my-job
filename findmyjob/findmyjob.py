@@ -158,6 +158,12 @@ def parse_cli_inputs():
         action="store_true",
         default=False,
     )
+    subp_main_exec.add_argument(
+        "-N", "--min-post-number",
+        help="Specify minimum number of posts to be scraped from website",
+        dest="min_post",
+        default="20",
+    )
     subp_main_exec.add_argument(  # :TODO:
         "--log",
         help="Log the execution history in current working directory",
@@ -217,11 +223,29 @@ def parse_cli_inputs():
     return cli_args
 
 
+def generate_template(cli_args):
+    # :FIXME:
+    pass
+
+def generate_example(cli_args):
+    # :FIXME:
+    pass
+
+def generate_inputfile(cli_args):
+    # assert cli_args.gen_mode != None
+
+    if ...:
+        generate_template(cli_args)
+    elif ...:
+        generate_example(cli_args)
+
+
 def execute_tool(cli_args):
+
     logging.getLogger().setLevel(logging.INFO)
 
     file_ = cli_args.file
-    _, file_ext = os.path.splitext(file_)
+    file_root , file_ext = os.path.splitext(file_)
     logging.info(f"file_={file_}")
     logging.info(f"file_ext={file_ext}")
     if str(file_ext).casefold() == ".ini": # Execute with Config File
@@ -240,31 +264,18 @@ def execute_tool(cli_args):
 
     job_searcher = JobSearcher(settings)
     if job_searcher.website == 'linkedin':
-        scraper = LinkedinScraper(job_searcher, cli_args, min_post=10)
+        scraper = LinkedinScraper(job_searcher,
+                                  cli_args,
+                                  min_post=int(cli_args.min_post))
         scraper.run()
+        scraper.backup(file_root + "-output-backup" + file_ext)
+        scraper.quit()
     else:  # :TODO:
         scraper = _JobDataScraper(job_searcher, cli_args)
         logging.error("Class is not implemented yet")
         raise NotImplementedError("Class is unsufficient for use")
 
     return
-
-
-def generate_template(cli_args):
-    # :FIXME:
-    pass
-
-def generate_example(cli_args):
-    # :FIXME:
-    pass
-
-def generate_inputfile(cli_args):
-    # assert cli_args.gen_mode != None
-
-    if ...:
-        generate_template(cli_args)
-    elif ...:
-        generate_example(cli_args)
 
 
 def main():

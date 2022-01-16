@@ -20,6 +20,9 @@ from bs4 import BeautifulSoup
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.keys import Keys
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
 from typing import Iterable, Sequence, Tuple, Union
 from pprint import pprint  # Pretty-printer for testing
 
@@ -90,8 +93,8 @@ class _JobDataScraper:
 
     def _dump_json_filelist(self, filepath):
     
-        with open(filepath, "w") as out_file:
-            json.dump(self._jobdict, out_file, indent=4)
+        with open(filepath, "w", encoding='utf8') as out_file:
+            json.dump(self._jobdict, out_file, indent=4, ensure_ascii=False)
         logging.info(f"Scraped files are dumped to filepath={filepath}")
 
 
@@ -100,7 +103,7 @@ class LinkedinScraper(_JobDataScraper):
     def __init__(self, 
                  job_searcher: JobSearcher, 
                  cli_args: argparse.ArgumentParser,
-                 min_post: int = 1000,
+                 min_post: int = 200,
                  ) -> None:
         super().__init__(job_searcher, cli_args, min_post)
 
@@ -227,6 +230,11 @@ class LinkedinScraper(_JobDataScraper):
                 count_try += 1
                 chrome_driver.find_element_by_xpath(
                     '//button[text()="See more jobs"]').click()
+                logger.warning(
+                    f"Try{count_try:02d}-"
+                    + "Successfully clicked on 'See more jobs' "
+                    + "botton with webdriver"
+                )
             except Exception:
                 logger.warning(
                     f"Try{count_try:02d}-"
@@ -319,9 +327,9 @@ class LinkedinScraper(_JobDataScraper):
 
             job_attributes.update(
                 {
-                    "title": title,
-                    "location": location,
-                    "company": company,
+                    "title": re.sub('\s+', ' ', title).strip(' '),
+                    "location": re.sub('\s+', ' ', location).strip(' '),
+                    "company": re.sub('\s+', ' ', company).strip(' '),
                 }
             )
             job_attributes.update(url_details)
@@ -335,6 +343,10 @@ class LinkedinScraper(_JobDataScraper):
         pass #:FIXME:
         chrome_driver = self.chrome_driver
         html_tags = self.get_linkedin_tags()
+        tag_4_details_listed = [
+            html_tags["details"][0],
+            *next(iter(html_tags["details"][1].items()))
+        ]
 
         logger.info(
             "Start scraping job details and description for each job"
@@ -345,9 +357,34 @@ class LinkedinScraper(_JobDataScraper):
         for job_attributes in self._joblist:
 
             try:
+                time.sleep(1)
                 url_parsed = job_attributes["url_parsed"]
                 chrome_driver.get(url_parsed)
-                time.sleep(2)
+
+                # If website loads an authentication wall
+                if "authwall" in str(chrome_driver.current_url).lower():
+                    logger.warning(
+                        "Accessing job post with " \
+                        + "jobId={}, ".format(job_attributes["jobId"]) \
+                        + "(url_parsed={}) ".format(
+                                job_attributes["url_parsed"]
+                                ) \
+                        + "was blocked with Authentication Wall "
+                        + "and Job Details could not be read"
+                        )
+                    time.sleep(2.5) # Hard-sleep
+                    continue
+                # If website does not load an authentication wall
+                # Wait a variable amount of time, maximum 10 seconds,
+                #   to check if website has loaded a tag with the
+                #   information defined in dict:'html_tags'["details"]
+                element = WebDriverWait(chrome_driver, 10).until(
+                    EC.presence_of_element_located(
+                        (By.XPATH, 
+                         r"//{}[@{}='{}']".format(*tag_4_details_listed)
+                        )
+                    )
+                )
 
                 soup_search_results = self._scrape_webpage(
                     source_code=chrome_driver.page_source,
@@ -357,7 +394,10 @@ class LinkedinScraper(_JobDataScraper):
                 # Sanity Check :REVIEW::DEBUG:
                     # It should always return 1 item
                 logger.info(
-                    "For jobId={}".format(job_attributes["jobId"]) \
+                    "For jobId={}, ".format(job_attributes["jobId"]) \
+                    + "(url_parsed={}) ".format(
+                            job_attributes["url_parsed"]
+                            )
                     + r"'bs4.BeautifulSoup(..., 'html.parser') returned "\
                     + f"{len(soup_search_results)} instance(s) of " \
                     + "job_details"
@@ -371,38 +411,70 @@ class LinkedinScraper(_JobDataScraper):
                     )
                 job_description = tag_job_description.text 
                 # :TODO: remove <br> and other style tags from job_description
-                tag_job_criteria = element.find_all(
-                    html_tags["job_criteria"][0],
-                    attrs=html_tags["job_criteria"][1]
-                    ) # :DEBUG: is this parsing correct
-                seniority_level = tag_job_criteria[0].text
-                employment_type = tag_job_criteria[1].text
-                job_function = tag_job_criteria[2].text
-                industries = tag_job_criteria[3].text
-                # print(*[i.text for i in tag_job_criteria])
-
                 job_attributes.update(
-                    {
-                        "job_description": job_description,
-                        "seniority_level": seniority_level,
-                        "employment_type": employment_type,
-                        "job_function": job_function,
-                        "industries": industries
-                    }
+                    {"job_description": \
+                        re.sub('\s+', ' ', job_description).strip(' ')}
                 )
 
             except Exception as raised_error:
-                logging.exception(str(raised_error))
+                logging.exception("\n"+str(raised_error)+"\n")
                 continue
-    
+            
+            finally:
+                try:
+                    
+                    tag_job_criteria = element.find_all(
+                        html_tags["job_criteria"][0],
+                        attrs=html_tags["job_criteria"][1]
+                        )
+                    # :X:
+                    # print(*[i.text for i in tag_job_criteria])
+                    # print(job_attributes["title"])
+
+                    # :TODO:
+                    # Interpret which values are provided in website
+                    # with additional HTML parsing
+                    seniority_level = tag_job_criteria[0].text
+                    employment_type = tag_job_criteria[1].text
+                    job_function = tag_job_criteria[2].text
+                    industries = tag_job_criteria[3].text
+
+                    job_attributes.update(
+                        {
+                            "seniority_level": \
+                                re.sub('\s+',' ',seniority_level).strip(' '),
+                            "employment_type": \
+                                re.sub('\s+',' ',employment_type).strip(' '),
+                            "job_function": \
+                                re.sub('\s+',' ',job_function).strip(' '),
+                            "industries": \
+                                re.sub('\s+',' ',industries).strip(' ')
+                        }
+                    )
+                except Exception:
+                    logging.warning(
+                        "For jobId={}, ".format(job_attributes["jobId"])
+                        + "(url_parsed={}) ".format(
+                            job_attributes["url_parsed"]
+                            )
+                        + "Not All job criteria is not supplied, "
+                        + "hence they will not be stored."
+                    )
+
+
     def run(self):
 
         chrome_driver = self._invoke_webdriver()
         self.__obtain_joblist()
         self.__obtain_job_contents()
         self._resolve_joblist()
-        self._dump_json_filelist(
-            r"C:\Users\brknk\Documents\05 Getting_Employed\99_Programming\02_Projects\findmyfuturejob\examples\testquery.json"
-        )
 
-        chrome_driver.quit()
+
+    def backup(self, filepath):
+
+        # :TODO: Implement multiple ways to backup the scraped data
+        self._dump_json_filelist(filepath)
+
+    def quit(self):
+
+        self.chrome_driver.quit()
