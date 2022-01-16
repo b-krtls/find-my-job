@@ -21,12 +21,12 @@ class JobSearcher:
     #:TODO:
     # [ ] Implement __str__ or at least __repr__ dunder methods
 
-    def __init__(self, config: configparser.ConfigParser) -> None:
-        self.config = config
-        self.website = config["website"].casefold()
-        self.keywords = config["keywords"].casefold()
+    def __init__(self, settings: dict) -> None:
+        self._settings = settings
+        self.website = settings["website"].casefold()
+        self.keywords = settings["keywords"].lower()
         self.keywords_quoted = ""
-        self.location = config["location"].casefold()
+        self.location = settings["location"].casefold()
         self.location_quoted = ""
         self.url = ""
 
@@ -43,16 +43,16 @@ class JobSearcher:
             # :NOTE:
             # - position and pageNUM changes automatically represent
             #       the details of each job posting
-            search_url = "https://www.linkedin.com/jobs/search?" + \
-                "keywords={}&location={}&distance=100&" + \
-                "trk=public_jobs_jobs-search-bar_search-submit&" + \
-                "position=1&pageNum=0"
+            search_url = r"https://www.linkedin.com/jobs/search?" + \
+                r"keywords={}&location={}&distance=25&" + \
+                r"trk=public_jobs_jobs-search-bar_search-submit&" + \
+                r"position=1&pageNum=0"
 
         # Use urllib.parse to parse search terms and location
         #   (entities in the search term used for querying)
         # Encode non-alfanumeric characters to be compatible with URLs
-        self.keywords_quoted = str(urllib.parse.quote(self.keywords, safe=''))
-        self.location_quoted = str(urllib.parse.quote(self.keywords, safe=''))
+        self.keywords_quoted = str(urllib.parse.quote(self.keywords, safe='')) 
+        self.location_quoted = str(urllib.parse.quote(self.location, safe=''))
         self.url = search_url.format(
             self.keywords_quoted, self.location_quoted
         )

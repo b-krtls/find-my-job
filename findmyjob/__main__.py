@@ -1,2 +1,2 @@
-from .findmyjob import main
+from findmyjob.findmyjob import main
 main()

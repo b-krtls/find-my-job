@@ -77,6 +77,7 @@ github
 
 **Here** goes the assumptions with the method
 
+The JobId obtained from the url of individual job postings are unique and can be used as a primary key to access that particular job posting.
 
 ### Developer Roadmap
 
